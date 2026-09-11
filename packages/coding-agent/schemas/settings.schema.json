@@ -203,6 +203,9 @@
       "type": "boolean",
       "default": false
     },
+    "toolOutputExpanded": {
+      "type": "boolean"
+    },
     "showCacheMissNotices": {
       "type": "boolean",
       "description": "Show cache cost and provider recovery notices.",
