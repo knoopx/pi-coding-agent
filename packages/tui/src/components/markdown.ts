@@ -298,6 +298,8 @@ export interface MarkdownTheme {
 	highlightCode?: (code: string, lang?: string) => string[];
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
+	codeBlockPaddingTop?: (text: string) => string;
+	codeBlockPaddingBottom?: (text: string) => string;
 }
 
 export interface MarkdownOptions {
@@ -387,13 +389,15 @@ export class Markdown implements Component {
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];
 
+		let prevTokenType: string | undefined;
 		for (let i = 0; i < tokens.length; i++) {
 			const token = tokens[i];
 			const nextToken = tokens[i + 1];
-			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type);
+			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type, undefined, prevTokenType);
 			for (const tokenLine of tokenLines) {
 				renderedLines.push(tokenLine);
 			}
+			prevTokenType = token.type;
 		}
 
 		// Wrap lines (NO padding, NO background yet)
@@ -534,11 +538,41 @@ export class Markdown implements Component {
 		};
 	}
 
+	/**
+	 * Render a code block as an indented block with a tinted background.
+	 */
+	private renderCodeBlock(code: string, lang: string, availableWidth: number): string[] {
+		const lines: string[] = [];
+		const codeBlockStyle = this.theme.codeBlock;
+		const indent = "  ";
+		const codeWidth = Math.max(1, availableWidth - indent.length);
+		const width = Math.max(0, availableWidth);
+		const fallbackPadding = codeBlockStyle(" ".repeat(width));
+		const topPadding = this.theme.codeBlockPaddingTop
+			? this.theme.codeBlockPaddingTop("▀".repeat(width))
+			: fallbackPadding;
+		const bottomPadding = this.theme.codeBlockPaddingBottom
+			? this.theme.codeBlockPaddingBottom("▄".repeat(width))
+			: fallbackPadding;
+		const codeLines = this.theme.highlightCode ? this.theme.highlightCode(code, lang) : code.split("\n");
+		lines.push(topPadding);
+		for (const codeLine of codeLines) {
+			for (const wrappedLine of wrapTextWithAnsi(codeLine, codeWidth)) {
+				const visibleLen = visibleWidth(wrappedLine);
+				const padding = " ".repeat(Math.max(0, availableWidth - indent.length - visibleLen));
+				lines.push(codeBlockStyle(indent + wrappedLine + padding));
+			}
+		}
+		lines.push(bottomPadding);
+		return lines;
+	}
+
 	private renderToken(
 		token: Token,
 		width: number,
 		nextTokenType?: string,
 		styleContext?: InlineStyleContext,
+		prevTokenType?: string,
 	): string[] {
 		const lines: string[] = [];
 
@@ -601,24 +635,8 @@ export class Markdown implements Component {
 			}
 
 			case "code": {
-				const indent = this.theme.codeBlockIndent ?? "  ";
-				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
-				if (this.theme.highlightCode) {
-					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
-					for (const hlLine of highlightedLines) {
-						lines.push(`${indent}${hlLine}`);
-					}
-				} else {
-					// Split code by newlines and style each line
-					const codeLines = token.text.split("\n");
-					for (const codeLine of codeLines) {
-						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
-					}
-				}
-				lines.push(this.theme.codeBlockBorder("```"));
-				if (nextTokenType && nextTokenType !== "space") {
-					lines.push(""); // Add spacing after code blocks (unless space token follows)
-				}
+				const codeBlockLines = this.renderCodeBlock(token.text, token.lang, width);
+				lines.push(...codeBlockLines);
 				break;
 			}
 
@@ -700,7 +718,11 @@ export class Markdown implements Component {
 				break;
 
 			case "space":
-				// Space tokens represent blank lines in markdown
+				// Space tokens represent blank lines in markdown.
+				// Skip spacing directly around code blocks; the block supplies its own padding.
+				if (prevTokenType === "code" || nextTokenType === "code") {
+					break;
+				}
 				lines.push("");
 				break;
 
