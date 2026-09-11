@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
 import { renderLatex } from "../latex.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
@@ -168,11 +171,91 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 	token.text = token.text.slice(0, -lastLine.length).replace(/\n$/, "");
 }
 
+// Bare path tokens (tilde / relative / absolute / file: URI) are not autolinked by
+// marked (it only autolinks scheme URLs and emails), so add an inline tokenizer that
+// turns them into `link` tokens. The existing `case "link"` renderer then renders them
+// as OSC 8 hyperlinks (or a parenthesized href fallback) with no further changes.
+const PATH_TOKEN_REGEX =
+	/^(?:file:\/\/[A-Za-z0-9._~/-]*|~\/[A-Za-z0-9._~/-]*|\.\.?\/[A-Za-z0-9._~/-]*|\/[A-Za-z0-9._-][A-Za-z0-9._~/-]*)/;
+// The prefixes a bare path token may begin with, used to locate where one starts inline.
+const PATH_START_SCAN_REGEX = /(?:~\/|\.\.?\/|\/[A-Za-z0-9._-]|file:\/\/)/g;
+// A path start is only valid when it is not glued to the preceding word/identifier, so
+// slash operators like "and/or" or "C++/Rust" and ellipses stay plain text.
+const PATH_NOT_BOUNDARY_REGEX = /[A-Za-z0-9_+~.]/;
+
+/**
+ * Resolve a bare path token to an absolute path: expand a leading `~` to the home
+ * directory and resolve relative paths against the current working directory.
+ * Mirrors the coding-agent resolvePath() helper, which the tui package cannot import.
+ */
+function resolvePathToAbsolute(rawPath: string): string {
+	if (rawPath === "~") {
+		return homedir();
+	}
+	if (rawPath.startsWith("~/")) {
+		return join(homedir(), rawPath.slice(2));
+	}
+	if (isAbsolute(rawPath)) {
+		return resolve(rawPath);
+	}
+	return resolve(process.cwd(), rawPath);
+}
+
+function pathLinkHref(rawPath: string): string {
+	// file: URIs are already absolute URLs and are used verbatim as the href.
+	if (rawPath.startsWith("file://")) {
+		return rawPath;
+	}
+	return pathToFileURL(resolvePathToAbsolute(rawPath)).href;
+}
+
+function tokenizeInlinePath(source: string): Tokens.Generic | undefined {
+	const match = PATH_TOKEN_REGEX.exec(source);
+	if (!match) {
+		return undefined;
+	}
+	const text = match[0];
+	return {
+		type: "link",
+		raw: text,
+		text,
+		href: pathLinkHref(text),
+		tokens: [{ type: "text", raw: text, text }],
+	};
+}
+
+/**
+ * Find the index of the next bare path token in the inline source so the built-in text
+ * tokenizer stops right before it, letting tokenizeInlinePath() claim the path.
+ */
+function findInlinePathStart(source: string): number | undefined {
+	PATH_START_SCAN_REGEX.lastIndex = 0;
+	for (;;) {
+		const match = PATH_START_SCAN_REGEX.exec(source);
+		if (!match) {
+			return undefined;
+		}
+		const index = match.index;
+		const previous = index > 0 ? source[index - 1] : "";
+		if (index === 0 || !PATH_NOT_BOUNDARY_REGEX.test(previous)) {
+			return index;
+		}
+		PATH_START_SCAN_REGEX.lastIndex = index + 1;
+	}
+}
+
+const PATH_LINK_EXTENSION: TokenizerExtension = {
+	name: "pathLink",
+	level: "inline",
+	start: findInlinePathStart,
+	tokenizer: tokenizeInlinePath,
+};
+
 const markdownParser = new Marked();
 markdownParser.setOptions({
 	tokenizer: new StrictStrikethroughTokenizer(),
 });
-markdownParser.use({ extensions: [...LATEX_MARKDOWN_EXTENSIONS] });
+markdownParser.use({ extensions: [...LATEX_MARKDOWN_EXTENSIONS, PATH_LINK_EXTENSION] });
 
 /**
  * Default text styling for markdown content.

@@ -1,5 +1,8 @@
 import assert from "node:assert";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
 import { Markdown, type MarkdownTheme } from "../src/components/markdown.ts";
@@ -1689,6 +1692,79 @@ bar`,
 				line.replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "").replace(/\x1b\[[0-9;]*m/g, ""),
 			);
 			assert.ok(!rawPlain.join("").includes("(https://example.com)"), "URL should not appear twice");
+		});
+
+		it("should render a tilde path as an OSC 8 hyperlink", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("see ~/example.md", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+			const expectedHref = pathToFileURL(join(homedir(), "example.md")).href;
+
+			assert.ok(
+				joined.includes(`\x1b]8;;${expectedHref}\x1b\\`),
+				"Should contain OSC 8 hyperlink with the resolved file URL",
+			);
+			assert.ok(joined.includes("\x1b]8;;\x1b\\"), "Should contain OSC 8 close sequence");
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+			assert.ok(plainLines.join(" ").includes("~/example.md"), "Should show the tilde path text");
+		});
+
+		it("should render a relative path as an OSC 8 hyperlink resolving against cwd", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("run ./b.md now", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+			const expectedHref = pathToFileURL(resolve(process.cwd(), "b.md")).href;
+
+			assert.ok(
+				joined.includes(`\x1b]8;;${expectedHref}\x1b\\`),
+				"Should contain OSC 8 hyperlink with the cwd-resolved file URL",
+			);
+			assert.ok(joined.includes("\x1b]8;;\x1b\\"), "Should contain OSC 8 close sequence");
+		});
+
+		it("should render a bare absolute path as an OSC 8 hyperlink", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("see /home/user/x.md", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+			const expectedHref = pathToFileURL("/home/user/x.md").href;
+
+			assert.ok(
+				joined.includes(`\x1b]8;;${expectedHref}\x1b\\`),
+				"Should contain OSC 8 hyperlink with the absolute file URL",
+			);
+			assert.ok(joined.includes("\x1b]8;;\x1b\\"), "Should contain OSC 8 close sequence");
+		});
+
+		it("should show a parenthesized file URL for a tilde path when hyperlinks are unsupported", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+			const markdown = new Markdown("see ~/example.md", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+			const joinedPlain = plainLines.join(" ");
+			const expectedHref = pathToFileURL(join(homedir(), "example.md")).href;
+
+			assert.ok(joinedPlain.includes("~/example.md"), "Should contain the tilde path text");
+			assert.ok(joinedPlain.includes(`(${expectedHref})`), "Should show the resolved file URL in parentheses");
+		});
+
+		it("should show a parenthesized file URL for a relative path when hyperlinks are unsupported", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+			const markdown = new Markdown("run ./b.md now", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+			const joinedPlain = plainLines.join(" ");
+			const expectedHref = pathToFileURL(resolve(process.cwd(), "b.md")).href;
+
+			assert.ok(joinedPlain.includes("./b.md"), "Should contain the relative path text");
+			assert.ok(joinedPlain.includes(`(${expectedHref})`), "Should show the cwd-resolved file URL in parentheses");
 		});
 	});
 
