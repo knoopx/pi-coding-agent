@@ -620,6 +620,7 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.toolOutputExpanded = this.settingsManager.getToolOutputExpanded();
 		this.outputPad = this.settingsManager.getOutputPad();
 
 		// Register themes from resource loader and initialize
@@ -1996,6 +1997,7 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.toolOutputExpanded = this.settingsManager.getToolOutputExpanded();
 		this.outputPad = this.settingsManager.getOutputPad();
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		const clearOnShrink = this.settingsManager.getClearOnShrink();
@@ -4404,6 +4406,7 @@ export class InteractiveMode {
 		if (expanded === this.toolOutputExpanded) return;
 
 		this.toolOutputExpanded = expanded;
+		this.settingsManager.setToolOutputExpanded(expanded);
 		const activeHeader = this.customHeader ?? this.builtInHeader;
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
@@ -6221,6 +6224,7 @@ export class InteractiveMode {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+			this.toolOutputExpanded = this.settingsManager.getToolOutputExpanded();
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.rebuildChatFromMessages();
 			chatRestoredBeforeSessionStart = true;
