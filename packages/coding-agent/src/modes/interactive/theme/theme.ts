@@ -1029,6 +1029,14 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 	if (!ext) return undefined;
 
 	const extToLang: Record<string, string> = {
+		diff: "diff",
+		hujson: "json",
+		jsonc: "json",
+		jsonl: "json",
+		justfile: "makefile",
+		mdx: "markdown",
+		mts: "typescript",
+		nix: "nix",
 		ts: "typescript",
 		tsx: "typescript",
 		js: "javascript",
