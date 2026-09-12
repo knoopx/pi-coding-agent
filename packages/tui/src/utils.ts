@@ -693,8 +693,16 @@ class AnsiCodeTracker {
 		if (this.fgColor) codes.push(this.fgColor);
 		if (this.bgColor) codes.push(this.bgColor);
 
+		// An ST-terminated OSC 8 hyperlink is intentionally NOT re-emitted here: it spans
+		// the whole wrapped block it was opened in, and its matching close (emitted by the
+		// caller) terminates it. Reopening it on every physical line produced a duplicate
+		// open (with a style reset leaking into the URL region) that rendered a wrapped link
+		// as plain, non-clickable text.
+		// BEL-terminated (OAuth) hyperlinks still reopen per line: some terminals only make
+		// BEL links clickable per physical line, so the open is re-emitted (and closed, see
+		// getLineEndReset) to keep every wrapped fragment clickable.
 		let result = codes.length > 0 ? `\x1b[${codes.join(";")}m` : "";
-		if (this.activeHyperlink) {
+		if (this.activeHyperlink?.terminator === "\x07") {
 			result += formatOsc8Hyperlink(this.activeHyperlink);
 		}
 		return result;
@@ -723,7 +731,8 @@ class AnsiCodeTracker {
 	/**
 	 * Get reset codes for attributes that need to be turned off at line end.
 	 * Underline must be closed to prevent bleeding into padding.
-	 * Active OSC 8 hyperlinks must be closed and re-opened on the next line.
+	 * BEL-terminated (OAuth) hyperlinks are closed and re-opened on the next line;
+	 * ST-terminated hyperlinks span the wrapped block (no per-line close).
 	 * Returns empty string if no attributes need closing.
 	 */
 	getLineEndReset(): string {
@@ -731,8 +740,12 @@ class AnsiCodeTracker {
 		if (this.underline) {
 			result += "\x1b[24m"; // Underline off only
 		}
-		if (this.activeHyperlink) {
-			result += formatOsc8Close(this.activeHyperlink.terminator); // Re-opened at line start via getActiveCodes()
+		// BEL-terminated (OAuth) hyperlinks close here and are re-opened at the start of the
+		// next line (see getActiveCodes) so every wrapped fragment stays clickable. ST-terminated
+		// hyperlinks span the wrapped block: their single close (emitted by the caller, after the
+		// last fragment) terminates them, so no per-line close is emitted.
+		if (this.activeHyperlink?.terminator === "\x07") {
+			result += formatOsc8Close(this.activeHyperlink.terminator);
 		}
 		return result;
 	}

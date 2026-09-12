@@ -326,7 +326,7 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["- ```ts", "    alpha beta gamma", "  delta epsilon zeta", "  ```"]);
+			assert.deepStrictEqual(lines, ["-", "    alpha beta gamma", "    delta epsilon zeta", ""]);
 		});
 	});
 
@@ -934,7 +934,7 @@ A=
 			const markdown = new Markdown(source, 0, 0, defaultMarkdownTheme);
 			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["Escaped $x-y$.", "", "```text", "  $\\mathbb{C}^3$", "```"]);
+			assert.deepStrictEqual(lines, ["Escaped $x-y$.", "", "  $\\mathbb{C}^3$", ""]);
 		});
 
 		it("allows LaTeX rendering to be disabled", () => {
@@ -1117,61 +1117,65 @@ again, hello world`,
 			const lines = markdown.render(80);
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
 
-			const closingBackticksIndex = plainLines.indexOf("```");
-			assert.ok(closingBackticksIndex !== -1, "Should have closing backticks");
+			const codeLineIndex = plainLines.findIndex((line) => line.includes("const hello"));
+			assert.ok(codeLineIndex !== -1, "Should have the code line");
 
-			const afterBackticks = plainLines.slice(closingBackticksIndex + 1);
-			const emptyLineCount = afterBackticks.findIndex((line) => line !== "");
+			const afterCode = plainLines.slice(codeLineIndex + 1);
+			const emptyLineCount = afterCode.findIndex((line) => line !== "");
 
 			assert.strictEqual(
 				emptyLineCount,
 				1,
-				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after backticks: ${JSON.stringify(afterBackticks.slice(0, 5))}`,
+				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after code: ${JSON.stringify(afterCode.slice(0, 5))}`,
 			);
 		});
 
 		it("should normalize paragraph and code block spacing to one blank line", () => {
 			const cases = [
-				`hello this is text
-\`\`\`
-code block
-\`\`\`
-more text`,
-				`hello this is text
-
-\`\`\`
-code block
-\`\`\`
-
-more text`,
+				{
+					text: "hello this is text\n```\ncode block\n```\nmore text",
+					expected: ["hello this is text", "", "", "  code block", "", "more text"],
+				},
+				{
+					text: "hello this is text\n\n```\ncode block\n```\n\nmore text",
+					expected: ["hello this is text", "", "  code block", "", "more text"],
+				},
 			];
-			const expectedLines = ["hello this is text", "", "```", "  code block", "```", "", "more text"];
 
-			for (const text of cases) {
+			for (const { text, expected } of cases) {
 				const markdown = new Markdown(text, 0, 0, defaultMarkdownTheme);
 				const lines = markdown.render(80);
 				const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
 
 				assert.deepStrictEqual(
 					plainLines,
-					expectedLines,
+					expected,
 					`Unexpected spacing for markdown: ${JSON.stringify(text)}`,
 				);
 			}
 		});
 
 		it("should not add a trailing blank line when code block is the last rendered block", () => {
-			const cases = ["```js\nconst hello = 'world';\n```", "hello world\n\n```js\nconst hello = 'world';\n```"];
+			const cases = [
+				{
+					text: "```js\nconst hello = 'world';\n```",
+					expected: ["", "  const hello = 'world';", ""],
+				},
+				{
+					text: "hello world\n\n```js\nconst hello = 'world';\n```",
+					expected: ["hello world", "", "  const hello = 'world';", ""],
+				},
+			];
 
-			for (const text of cases) {
+			for (const { text, expected } of cases) {
 				const markdown = new Markdown(text, 0, 0, defaultMarkdownTheme);
 				const lines = markdown.render(80);
 				const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
 
-				assert.notStrictEqual(
-					plainLines.at(-1),
-					"",
-					`Expected code block to end without a blank line: ${JSON.stringify(plainLines)}`,
+				assert.deepStrictEqual(
+					plainLines,
+					expected,
+					`Expected code block to end with its bottom padding and no extra blank line: ${JSON.stringify(plainLines)}`,
 				);
 			}
 		});
@@ -1766,6 +1770,142 @@ bar`,
 			assert.ok(joinedPlain.includes("./b.md"), "Should contain the relative path text");
 			assert.ok(joinedPlain.includes(`(${expectedHref})`), "Should show the cwd-resolved file URL in parentheses");
 		});
+
+		it("should render a file:// URI as an OSC 8 hyperlink using the href verbatim", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("open file:///abs/x now", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			// file: URIs are used verbatim as the href (no pathToFileURL re-encoding)
+			assert.ok(
+				joined.includes("\x1b]8;;file:///abs/x\x1b\\"),
+				"Should contain an OSC 8 hyperlink with the file:// href used verbatim",
+			);
+			assert.ok(joined.includes("\x1b]8;;\x1b\\"), "Should contain OSC 8 close sequence");
+		});
+
+		it("should show a file:// URI as plain text when hyperlinks are unsupported", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+			const markdown = new Markdown("open file:///abs/x now", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+			const joinedPlain = plainLines.join(" ");
+
+			// For a file: URI, token.text === token.href, so the fallback prints only the
+			// link text (no parenthesized URL, unlike scheme/relative links).
+			assert.ok(joinedPlain.includes("file:///abs/x"), "Should contain the verbatim file:// URI text");
+		});
+
+		it("should render a parent relative path as an OSC 8 hyperlink resolving against cwd", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("see ../b.md", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+			const expectedHref = pathToFileURL(resolve(process.cwd(), "../b.md")).href;
+
+			assert.ok(
+				joined.includes(`\x1b]8;;${expectedHref}\x1b\\`),
+				"Should contain an OSC 8 hyperlink with the cwd-resolved parent file URL",
+			);
+			assert.ok(joined.includes("\x1b]8;;\x1b\\"), "Should contain OSC 8 close sequence");
+		});
+
+		it("should not linkify a path inside a fenced code block", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("```\n~/x\n```", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			// Code block content is not inline-tokenized, so no OSC 8 hyperlink is emitted
+			assert.ok(!joined.includes("\x1b]8;;"), "Code block content should not be linkified");
+			assert.ok(joined.includes("~/x"), "Should still show the code block text");
+		});
+
+		it("should not linkify a path inside a backtick code span", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("run `~/x` to test", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			// A codespan is atomic; its content is not inline-tokenized into a path link
+			assert.ok(!joined.includes("\x1b]8;;"), "Code span content should not be linkified");
+			assert.ok(joined.includes("~/x"), "Should still show the code span text");
+		});
+
+		it("should not linkify a path glued to a preceding word char", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("and/or and C++/Rust", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+
+			// A path start glued to a preceding word/+ char (the 'd' before '/' in "and/or",
+			// the '+' before '/' in "C++/Rust") is not a valid boundary, so these slash
+			// operators stay plain text (no OSC 8 hyperlink is emitted). (A glued tilde path
+			// such as "word~/x" is not suppressed: the text tokenizer stops before the '~',
+			// so the extension captures "~/x" as a link.)
+			assert.ok(!joined.includes("\x1b]8;;"), "Paths glued to a preceding word char should stay plain");
+			assert.ok(joined.includes("and/or"), "Should show the slash operator as plain text");
+			assert.ok(joined.includes("C++/Rust"), "Should show the slash operator as plain text");
+		});
+
+		it("should linkify a path preceded by an opening paren", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const markdown = new Markdown("see (~/x) only", 0, 0, defaultMarkdownTheme);
+
+			const lines = markdown.render(80);
+			const joined = lines.join("");
+			const expectedHref = pathToFileURL(join(homedir(), "x")).href;
+
+			// A path preceded by a non-word char (here '(') is a valid boundary and linkifies
+			assert.ok(
+				joined.includes(`\x1b]8;;${expectedHref}\x1b\\`),
+				"Should linkify a path preceded by an opening paren",
+			);
+			assert.ok(joined.includes("\x1b]8;;\x1b\\"), "Should contain OSC 8 close sequence");
+		});
+
+		it("keeps a single OSC 8 open and close spanning a wrapped path in a table cell", () => {
+			setCapabilities({ images: null, trueColor: false, hyperlinks: true });
+			const source = `| Field | Value |
+| --- | --- |
+| Artifact | ~/.local/state/pi/01a09760-f33e-7713-b9ce-6aa84eb1bb5a/artifacts/journal-balance-all.png (68 KB, 1500x825) |
+`;
+			const markdown = new Markdown(source, 0, 0, defaultMarkdownTheme);
+			// Width 80 forces the long Value cell to wrap the path onto two lines.
+			const joined = markdown.render(80).join("");
+			const href = pathToFileURL(
+				join(homedir(), ".local/state/pi/01a09760-f33e-7713-b9ce-6aa84eb1bb5a/artifacts/journal-balance-all.png"),
+			).href;
+
+			// A wrapped label must be bounded by exactly ONE open and ONE close, not re-opened per line.
+			const openSeq = `\x1b]8;;${href}\x1b\\`;
+			const closeSeq = "\x1b]8;;\x1b\\";
+			const openCount = joined.split(openSeq).length - 1;
+			const closeCount = joined.split(closeSeq).length - 1;
+			assert.strictEqual(openCount, 1, `Expected exactly one OSC 8 open, found ${openCount}`);
+			assert.strictEqual(closeCount, 1, `Expected exactly one OSC 8 close, found ${closeCount}`);
+
+			// No duplicate open or style reset may appear between the open and the label.
+			const openEnd = joined.indexOf(openSeq) + openSeq.length;
+			const firstChar = joined.indexOf("~/.local", openEnd);
+			assert.ok(firstChar > openEnd, "Link label must follow the OSC 8 open");
+			const urlRegion = joined.slice(openEnd, firstChar);
+			assert.ok(
+				!urlRegion.includes(closeSeq),
+				`No duplicate OSC 8 open may precede the label: ${JSON.stringify(urlRegion)}`,
+			);
+			assert.ok(
+				!/\x1b\[0m|\x1b\[39m/.test(urlRegion),
+				`No style reset may leak into the URL region: ${JSON.stringify(urlRegion)}`,
+			);
+		});
 	});
 
 	describe("HTML-like tags in text", () => {
@@ -1810,27 +1950,27 @@ bar`,
 			const cases = [
 				{
 					input: "```ts\nconst x = 1;\n``",
-					expected: ["```ts", "  const x = 1;", "```"],
+					expected: ["", "  const x = 1;", ""],
 				},
 				{
 					input: "```md\nnot a closing fence:\n``\n```",
-					expected: ["```md", "  not a closing fence:", "  ``", "```"],
+					expected: ["", "  not a closing fence:", "  ``", ""],
 				},
 				{
 					input: "```ts\n``",
-					expected: ["```ts", "", "```"],
+					expected: ["", "", ""],
 				},
 				{
 					input: "````\n```",
-					expected: ["```", "", "```"],
+					expected: ["", "", ""],
 				},
 				{
 					input: "~~~~~\n~~~~",
-					expected: ["```", "", "```"],
+					expected: ["", "", ""],
 				},
 				{
 					input: "```md\nnot a closing fence:\n``\n```\n\nafter",
-					expected: ["```md", "  not a closing fence:", "  ``", "```", "", "after"],
+					expected: ["", "  not a closing fence:", "  ``", "", "after"],
 				},
 			];
 
